@@ -1,6 +1,6 @@
 ### AnyKernel3 Ramdisk Mod Script
 ## osm0sis @ xda-developers
-## PurrX — Redmi Note 10 Lite India / curtana
+## PurrX — Xiaomi curtana / Redmi Note 9 Pro India
 ## A-only, boot header v2
 ## Full-stack flash: kernel + verified PurrX DTB + DTBO
 
@@ -11,7 +11,7 @@ kernel.string=PurrX curtana r1 (KernelSU + SUSFS)
 kernel.compiler=Clang/LLVM 18 (LLVM=1, no GCC)
 kernel.made=SkRiaz593 / PurrX
 kernel.version=4.14.357-openela
-message.word=PurrX r1 compatibility build for Redmi Note 10 Lite India (curtana) only.
+message.word=PurrX r1 compatibility build for Xiaomi curtana only.
 do.devicecheck=1
 do.modules=0
 do.systemless=1
