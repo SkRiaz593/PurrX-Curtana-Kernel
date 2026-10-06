@@ -1,43 +1,13 @@
-name: Stormbreaker — build & release (miatoll)
+name: PurrX r1 — build & verify (curtana)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - arena/01a0bfbb-customkernel1
-      - arena/01a1039d-customkernel1
-    paths:
-      - ".github/workflows/build-miatoll.yml"
-      - "AnyKernel3/**"
-      - "arch/**"
-      - "block/**"
-      - "certs/**"
-      - "crypto/**"
-      - "drivers/**"
-      - "firmware/**"
-      - "fs/**"
-      - "include/**"
-      - "init/**"
-      - "ipc/**"
-      - "kernel/**"
-      - "lib/**"
-      - "mm/**"
-      - "net/**"
-      - "scripts/**"
-      - "security/**"
-      - "sound/**"
-      - "techpack/**"
-      - "usr/**"
-      - "virt/**"
-      - "Makefile"
-      - "Kbuild"
-      - "Kconfig"
 
 permissions:
   contents: read
 
 concurrency:
-  group: miatoll-kernel-${{ github.ref }}
+  group: purrx-curtana-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -65,9 +35,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: miatoll-ccache-${{ runner.os }}-${{ github.sha }}
+          key: purrx-curtana-ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            miatoll-ccache-${{ runner.os }}-
+            purrx-curtana-ccache-${{ runner.os }}-
 
       - name: Verify LLVM toolchain
         shell: bash
@@ -85,7 +55,7 @@ jobs:
             done
           } | tee toolchain-info.txt
 
-      - name: Generate and verify Miatoll configuration
+      - name: Generate and verify PurrX curtana configuration
         shell: bash
         run: |
           set -euo pipefail
@@ -164,6 +134,12 @@ jobs:
           require_config 'CONFIG_INCREMENTAL_FS=y'
           require_config 'CONFIG_QUOTA=y'
           require_config 'CONFIG_SCHED_WALT=y'
+          require_config 'CONFIG_LOCALVERSION="-PurrX-curtana-r1"'
+          require_config 'CONFIG_HZ_100=y'
+          require_config '# CONFIG_HZ_300 is not set'
+          require_config 'CONFIG_HZ=100'
+          require_config 'CONFIG_NO_HZ_IDLE=y'
+          require_config 'CONFIG_HIGH_RES_TIMERS=y'
           require_config 'CONFIG_MEMCG=y'
           # These were silently disabled by a duplicate trailing "is not set".
           require_config 'CONFIG_EXT4_ENCRYPTION=y'
@@ -236,7 +212,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: miatoll-build-failure-${{ github.run_number }}
+          name: purrx-curtana-build-failure-${{ github.run_number }}
           path: |
             build.log
             toolchain-info.txt
@@ -298,7 +274,7 @@ jobs:
             echo "toolchain.source=ubuntu-24.04-llvm"
             clang --version | head -n 1 | sed 's/^/clang.version=/'
             ld.lld --version | head -n 1 | sed 's/^/lld.version=/'
-            grep -E '^(CONFIG_KSU|CONFIG_NOMOUNT|CONFIG_LRU_GEN|CONFIG_DEFAULT_IOSCHED|CONFIG_SYSVIPC|CONFIG_USER_NS|CONFIG_NF_TABLES|CONFIG_EROFS_FS|CONFIG_NTFS_FS|CONFIG_BPF_SYSCALL|CONFIG_MODULE_SIG_FORCE)' out/.config || true
+            grep -E '^(CONFIG_LOCALVERSION|CONFIG_HZ|CONFIG_NO_HZ|CONFIG_HIGH_RES_TIMERS|CONFIG_KSU|CONFIG_NOMOUNT|CONFIG_LRU_GEN|CONFIG_DEFAULT_IOSCHED|CONFIG_SYSVIPC|CONFIG_USER_NS|CONFIG_NF_TABLES|CONFIG_EROFS_FS|CONFIG_NTFS_FS|CONFIG_BPF_SYSCALL|CONFIG_MODULE_SIG_FORCE)' out/.config || true
           } | tee build-info.txt
 
       - name: Package AnyKernel3 flashable zip
@@ -317,116 +293,8 @@ jobs:
       - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: miatoll-kernel-${{ github.run_number }}
+          name: PurrX-curtana-r1-${{ github.run_number }}
           path: artifacts/
           if-no-files-found: error
           compression-level: 9
           retention-days: 90
-
-  release:
-    name: Publish release
-    needs: build
-    if: success()
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout kernel source
-        uses: actions/checkout@v4
-
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: miatoll-kernel-${{ github.run_number }}
-          path: release-assets
-
-      - name: Fetch manager APK and companion modules
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # gh release download (authenticated) avoids anonymous rate limits
-          # and follows asset redirects. The companion assets are immutable
-          # copies published with stormbreaker-v111, so upstream tag churn
-          # cannot break this build; upstream releases are the fallback.
-          from_ours() { gh release download stormbreaker-v111 \
-            -R "$GITHUB_REPOSITORY" -p "$1" -D release-assets --clobber; }
-
-          # Manager APK: the fresh upstream release first (matches the
-          # v3.3.0-60 driver source), then older upstream tags, then the
-          # immutable -56 build on our own v111 release (same 32657 ABI).
-          got_manager=0
-          for tag in v3.3.0-60 v3.3.0-55; do
-            if gh release download "$tag" -R backslashxx/KernelSU \
-                 -p 'KernelSU_v3.3.0-*_*-release.apk' -D release-assets \
-                 --clobber; then
-              mv release-assets/KernelSU_v3.3.0-*_*-release.apk \
-                 release-assets/KernelSU-manager.apk
-              echo "manager APK: from backslashxx/KernelSU $tag"
-              got_manager=1
-              break
-            fi
-          done
-          if [ "$got_manager" -eq 0 ]; then
-            from_ours 'KernelSU-manager.apk'
-            echo "manager APK: from stormbreaker-v111 (v3.3.0-56 build)"
-          fi
-
-          if from_ours 'BRENE-v0.0.68.zip'; then
-            echo "BRENE: from stormbreaker-v111"
-          else
-            gh release download v0.0.68 -R rrr333nnn333/BRENE \
-              -p 'BRENE-v0.0.68.zip' -D release-assets --clobber
-          fi
-
-          if from_ours 'NoMount-v2.0.0.zip'; then
-            echo "NoMount: from stormbreaker-v111"
-          else
-            gh release download v2.0.0 -R maxsteeel/nomount \
-              -p 'NoMount-v2.0.0-release.zip' -D release-assets --clobber
-            mv release-assets/NoMount-v2.0.0-release.zip \
-               release-assets/NoMount-v2.0.0.zip
-          fi
-          # sanity: the manager APK and modules must be zip/apk archives
-          head -c2 release-assets/KernelSU-manager.apk | grep -q PK
-          head -c2 release-assets/BRENE-v0.0.68.zip | grep -q PK
-          head -c2 release-assets/NoMount-v2.0.0.zip | grep -q PK
-          ls -la release-assets/
-
-      - name: Prepare release notes
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Release body = ONLY this build's changelog entry (bullets).
-          awk -v n="${GITHUB_RUN_NUMBER}" '
-            $0 ~ "^## #" n " " {f=1; print; next}
-            f && /^## #/ {exit}
-            f {print}
-          ' CHANGELOG.md > release-notes.md
-          grep -q . release-notes.md || head -8 CHANGELOG.md > release-notes.md
-
-      - name: Create numbered release (history preserved)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # One release per build, numbered to match the zip (run number).
-          # Superseded iteration builds are pruned by hand so the releases page
-          # stays readable; the latest stable and the diagnostics pre-release are
-          # always kept (README -> "Releases & tags").
-          TAG="stormbreaker-v${GITHUB_RUN_NUMBER}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release delete "$TAG" --yes --cleanup-tag
-          fi
-          gh release create "$TAG" \
-            --target "$GITHUB_SHA" \
-            --title "Stormbreaker Kernel miatoll v${GITHUB_RUN_NUMBER}" \
-            --notes-file release-notes.md \
-            release-assets/Stormbreaker-miatoll-*.zip \
-            release-assets/KernelSU-manager.apk \
-            release-assets/BRENE-v0.0.68.zip \
-            release-assets/NoMount-v2.0.0.zip
-          gh release view "$TAG" --json url --jq '.url'
