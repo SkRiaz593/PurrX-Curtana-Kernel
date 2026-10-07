@@ -47,12 +47,13 @@ dump_boot;
 # Write boot partition with kernel + curtana DTB + DTBO
 write_boot;
 
-# Install PurrX Master Intelligent Engine
+# Install PurrX Master One-Shot KernelSU Boot Service
 ui_print " ";
 ui_print "Installing PurrX Master Performance & 4GB RAM Engine...";
 mkdir -p /data/adb/service.d 2>/dev/null;
 cat << 'EOF' > /data/adb/service.d/purrx-engine.sh
 #!/system/bin/sh
+# Runs once at boot completion, applies optimal kernel tunables, and exits cleanly (0 background overhead).
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 2
 done
@@ -98,23 +99,6 @@ fi
 if grep -q "fq_codel" /proc/sys/net/core/default_qdisc 2>/dev/null; then
     echo fq_codel > /proc/sys/net/core/default_qdisc 2>/dev/null
 fi
-
-# 5. Background / Screen-State Intelligent Power Monitor
-(
-    while true; do
-        screen_state=$(dumpsys power 2>/dev/null | grep -E "mHoldingDisplaySuspendBlocker|Display Power: state=" | grep -E "true|ON")
-        if [ -z "$screen_state" ]; then
-            # Screen is OFF: Deep Sleep mode
-            echo 0 > /sys/devices/system/cpu/cpufreq/policy0/schedutil/iowait_boost_enable 2>/dev/null
-            echo 0 > /sys/devices/system/cpu/cpufreq/policy6/schedutil/iowait_boost_enable 2>/dev/null
-        else
-            # Screen is ON: Full 60 FPS Gaming Responsiveness
-            echo 1 > /sys/devices/system/cpu/cpufreq/policy0/schedutil/iowait_boost_enable 2>/dev/null
-            echo 1 > /sys/devices/system/cpu/cpufreq/policy6/schedutil/iowait_boost_enable 2>/dev/null
-        fi
-        sleep 5
-    done
-) &
 EOF
 
 chmod 755 /data/adb/service.d/purrx-engine.sh 2>/dev/null;
