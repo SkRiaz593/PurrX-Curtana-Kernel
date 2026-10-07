@@ -1,6 +1,6 @@
 ### AnyKernel3 Ramdisk Mod Script
 ## osm0sis @ xda-developers
-## PurrX — Xiaomi curtana / Redmi Note 9 Pro India
+## PurrX r1 — Xiaomi curtana
 ## A-only, boot header v2
 ## Full-stack flash: kernel + verified PurrX DTB + DTBO
 
@@ -11,7 +11,7 @@ kernel.string=PurrX curtana r1 (KernelSU + SUSFS)
 kernel.compiler=Clang/LLVM 18 (LLVM=1, no GCC)
 kernel.made=SkRiaz593 / PurrX
 kernel.version=4.14.357-openela
-message.word=PurrX Master build for Xiaomi curtana only.
+message.word=PurrX r1 compatibility build for Xiaomi curtana only.
 do.devicecheck=1
 do.modules=0
 do.systemless=1
@@ -47,38 +47,39 @@ dump_boot;
 # Write boot partition with kernel + curtana DTB + DTBO
 write_boot;
 
-# Install PurrX Master One-Shot KernelSU Boot Service
+# Install PurrX r1 Safe One-Shot Boot Service
 ui_print " ";
-ui_print "Installing PurrX Master Performance & 4GB RAM Engine...";
+ui_print "Installing PurrX r1 Baseline Boot Service...";
 mkdir -p /data/adb/service.d 2>/dev/null;
 cat << 'EOF' > /data/adb/service.d/purrx-engine.sh
 #!/system/bin/sh
-# Runs once at boot completion, applies optimal kernel tunables, and exits cleanly (0 background overhead).
+# PurrX r1 One-Shot Boot Baseline Service
+# Executes once on boot completion, applies safe baseline tunables, and exits.
+# Zero persistent background polling.
+
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
     sleep 2
 done
 
-# 1. 4 GB RAM Optimization Engine (2 GiB LZ4 zRAM + MGLRU)
-if [ -e /dev/block/zram0 ]; then
-    swapoff /dev/block/zram0 2>/dev/null
-    echo 1 > /sys/block/zram0/reset 2>/dev/null
-    echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
-    echo 2147483648 > /sys/block/zram0/disksize 2>/dev/null
-    mkswap /dev/block/zram0 2>/dev/null
-    swapon /dev/block/zram0 -p 32767 2>/dev/null
+# ------------------------------------------------------------------------------
+# 1. zRAM Safe Baseline (Preserve Android configuration if already active)
+# ------------------------------------------------------------------------------
+if [ -e /proc/swaps ]; then
+    zram_active=$(grep -E '/dev/block/zram0|/dev/zram0' /proc/swaps 2>/dev/null || true)
+    if [ -z "$zram_active" ] && [ -e /dev/block/zram0 ]; then
+        # zRAM is uninitialized - configure 2 GiB LZ4 baseline once
+        if grep -q "lz4" /sys/block/zram0/comp_algorithm 2>/dev/null; then
+            echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
+        fi
+        echo 2147483648 > /sys/block/zram0/disksize 2>/dev/null
+        mkswap /dev/block/zram0 2>/dev/null
+        swapon /dev/block/zram0 -p 32767 2>/dev/null
+    fi
 fi
 
-echo 160 > /proc/sys/vm/swappiness 2>/dev/null
-echo 100 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
-echo 0 > /proc/sys/vm/page-cluster 2>/dev/null
-echo 10 > /proc/sys/vm/dirty_background_ratio 2>/dev/null
-echo 20 > /proc/sys/vm/dirty_ratio 2>/dev/null
-
-if [ -e /sys/kernel/mm/lru_gen/enabled ]; then
-    echo y > /sys/kernel/mm/lru_gen/enabled 2>/dev/null || echo 7 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
-fi
-
-# 2. CPU Governor Frame-Pacing Calibration (Flat 16.67ms 60 FPS Lock)
+# ------------------------------------------------------------------------------
+# 2. CPU Frame-Pacing Calibration (500µs up / 20ms down)
+# ------------------------------------------------------------------------------
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     if [ -d "$policy/schedutil" ]; then
         echo 500 > "$policy/schedutil/up_rate_limit_us" 2>/dev/null
@@ -87,21 +88,29 @@ for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     fi
 done
 
-# 3. GPU Power Nap & Adreno 618 Scaling
+# ------------------------------------------------------------------------------
+# 3. GPU Power-Nap (Ensure hardware nap is active)
+# ------------------------------------------------------------------------------
 if [ -e /sys/class/kgsl/kgsl-3d0/force_no_nap ]; then
     echo 0 > /sys/class/kgsl/kgsl-3d0/force_no_nap 2>/dev/null
 fi
 
-# 4. Low-Latency Network Engine (BBRplus + FQ-CoDel)
-if grep -q "bbrplus" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
-    echo bbrplus > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+# ------------------------------------------------------------------------------
+# 4. Low-Latency Network Queue Management (BBRplus + FQ-CoDel)
+# ------------------------------------------------------------------------------
+if [ -e /proc/sys/net/ipv4/tcp_available_congestion_control ]; then
+    if grep -q "bbrplus" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+        echo bbrplus > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+    fi
 fi
-if grep -q "fq_codel" /proc/sys/net/core/default_qdisc 2>/dev/null; then
-    echo fq_codel > /proc/sys/net/core/default_qdisc 2>/dev/null
+
+# Attempt FQ-CoDel queue discipline safely and verify
+if [ -e /proc/sys/net/core/default_qdisc ]; then
+    echo fq_codel > /proc/sys/net/core/default_qdisc 2>/dev/null || true
 fi
 EOF
 
 chmod 755 /data/adb/service.d/purrx-engine.sh 2>/dev/null;
-ui_print "PurrX Master Engine successfully installed!";
+ui_print "PurrX r1 Baseline Service successfully installed!";
 ui_print " ";
 ## end boot install
