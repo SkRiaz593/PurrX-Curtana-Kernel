@@ -44,9 +44,56 @@ PATCH_VBMETA_FLAG=auto;
 # Dump the existing boot image, install PurrX and repack it.
 dump_boot;
 
-# PurrX r1 includes the kernel-generated DTB and DTBO produced by the
-# pinned curtana-compatible source tree. Device validation above prevents
-# this package from being installed on other miatoll-family devices.
-
+# Write boot partition with kernel + curtana DTB + DTBO
 write_boot;
+
+# Install PurrX Self-Tuning KernelSU Boot Service
+ui_print " ";
+ui_print "Installing PurrX Performance & 4GB RAM Engine...";
+mkdir -p /data/adb/service.d 2>/dev/null;
+cat << 'EOF' > /data/adb/service.d/purrx-engine.sh
+#!/system/bin/sh
+until [ "$(getprop sys.boot_completed)" = "1" ]; do
+    sleep 2
+done
+
+# 1. 2 GiB LZ4 zRAM & Android 17 VM Configuration
+if [ -e /dev/block/zram0 ]; then
+    swapoff /dev/block/zram0 2>/dev/null
+    echo 1 > /sys/block/zram0/reset 2>/dev/null
+    echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
+    echo 2147483648 > /sys/block/zram0/disksize 2>/dev/null
+    mkswap /dev/block/zram0 2>/dev/null
+    swapon /dev/block/zram0 -p 32767 2>/dev/null
+fi
+echo 160 > /proc/sys/vm/swappiness 2>/dev/null
+echo 100 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
+echo 0 > /proc/sys/vm/page-cluster 2>/dev/null
+echo 10 > /proc/sys/vm/dirty_background_ratio 2>/dev/null
+echo 20 > /proc/sys/vm/dirty_ratio 2>/dev/null
+if [ -e /sys/kernel/mm/lru_gen/enabled ]; then
+    echo y > /sys/kernel/mm/lru_gen/enabled 2>/dev/null || echo 7 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
+fi
+
+# 2. Schedutil 60 FPS Frame-Pacing Calibration
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    if [ -d "$policy/schedutil" ]; then
+        echo 500 > "$policy/schedutil/up_rate_limit_us" 2>/dev/null
+        echo 20000 > "$policy/schedutil/down_rate_limit_us" 2>/dev/null
+        echo 1 > "$policy/schedutil/iowait_boost_enable" 2>/dev/null
+    fi
+done
+
+# 3. GPU Power Nap & Network Ping Engine
+if [ -e /sys/class/kgsl/kgsl-3d0/force_no_nap ]; then
+    echo 0 > /sys/class/kgsl/kgsl-3d0/force_no_nap 2>/dev/null
+fi
+if grep -q "bbrplus" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+    echo bbrplus > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+fi
+EOF
+
+chmod 755 /data/adb/service.d/purrx-engine.sh 2>/dev/null;
+ui_print "PurrX Engine successfully configured!";
+ui_print " ";
 ## end boot install
