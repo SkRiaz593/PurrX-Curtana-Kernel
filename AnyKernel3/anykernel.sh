@@ -7,7 +7,7 @@
 ### AnyKernel setup
 # global properties
 properties() { '
-kernel.string=PurrX curtana Master (KernelSU + SUSFS)
+kernel.string=PurrX curtana r1 (KernelSU + SUSFS)
 kernel.compiler=Clang/LLVM 18 (LLVM=1, no GCC)
 kernel.made=SkRiaz593 / PurrX
 kernel.version=4.14.357-openela
