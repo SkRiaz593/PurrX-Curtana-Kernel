@@ -39,10 +39,12 @@ static DEFINE_SPINLOCK(suspend_lock);
 #define MAX_TZ_VERSION		0
 
 /*
- * CEILING is 50msec, larger than any standard
- * frame length, but less than the idle timer.
+ * Esports Sub-Frame Burst:
+ * Lowered from 50ms (3 frame delay) to 12ms (under 1 frame deadline).
+ * Triggers instant peak GPU frequency before 60 FPS frames can drop.
  */
-#define CEILING			50000
+#define CEILING			12000
+
 #define TZ_RESET_ID		0x3
 #define TZ_UPDATE_ID		0x4
 #define TZ_INIT_ID		0x6
@@ -379,8 +381,8 @@ static int tz_get_target_freq(struct devfreq *devfreq, unsigned long *freq)
 	}
 
 	/*
-	 * If there is an extended block of busy processing,
-	 * increase frequency.  Otherwise run the normal algorithm.
+	 * Esports burst: If busy processing exceeds 12ms (approaching frame deadline),
+	 * instantly jump GPU clock to peak operating level.
 	 */
 	if (!priv->disable_busy_time_burst &&
 			priv->bin.busy_time > CEILING) {
