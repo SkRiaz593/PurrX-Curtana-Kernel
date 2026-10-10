@@ -61,20 +61,25 @@ cat << 'EOF' > /data/adb/service.d/purrx-engine.sh
 
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
 
-# --- zRAM: preserve Android config, only init if truly uninitialized ---
-if [ -e /proc/swaps ]; then
-    zram_active=$(grep -E '/dev/block/zram0|/dev/zram0' /proc/swaps 2>/dev/null || true)
-    if [ -z "$zram_active" ] && [ -e /dev/block/zram0 ]; then
-        if grep -q "lz4" /sys/block/zram0/comp_algorithm 2>/dev/null; then
-            echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
-        fi
-        echo 2147483648 > /sys/block/zram0/disksize 2>/dev/null
-        mkswap /dev/block/zram0 2>/dev/null
-        swapon /dev/block/zram0 -p 32767 2>/dev/null
-    fi
+# --- zRAM: 3.2GB LZ4 with aggressive swappiness to protect Discord on 4GB RAM ---
+if [ -e /sys/block/zram0 ]; then
+    swapoff /dev/block/zram0 2>/dev/null
+    echo 1 > /sys/block/zram0/reset 2>/dev/null
+    echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null
+    echo 3435973836 > /sys/block/zram0/disksize 2>/dev/null
+    mkswap /dev/block/zram0 2>/dev/null
+    swapon /dev/block/zram0 -p 32767 2>/dev/null
 fi
 
-# --- CPU: frame-pacing schedutil ---
+# --- VM: Virtual Memory & Multi-Gen LRU Tuning ---
+echo 100 > /proc/sys/vm/swappiness 2>/dev/null
+echo 60 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
+if [ -f /sys/kernel/mm/lru_gen/enabled ]; then
+    echo 7 > /sys/kernel/mm/lru_gen/enabled 2>/dev/null
+    echo 4000 > /sys/kernel/mm/lru_gen/min_ttl_ms 2>/dev/null
+fi
+
+# --- CPU: balanced schedutil ---
 for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     if [ -d "$policy/schedutil" ]; then
         echo 500 > "$policy/schedutil/up_rate_limit_us" 2>/dev/null
@@ -83,12 +88,12 @@ for policy in /sys/devices/system/cpu/cpufreq/policy*; do
     fi
 done
 
-# --- GPU: ensure power-nap is active ---
+# --- GPU: ensure power-nap is active for daily efficiency ---
 if [ -e /sys/class/kgsl/kgsl-3d0/force_no_nap ]; then
     echo 0 > /sys/class/kgsl/kgsl-3d0/force_no_nap 2>/dev/null
 fi
 
-# --- Network: BBRplus + FQ-CoDel if supported ---
+# --- Network: BBRplus + FQ-CoDel ---
 if [ -e /proc/sys/net/ipv4/tcp_available_congestion_control ]; then
     if grep -q "bbrplus" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
         echo bbrplus > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
@@ -106,9 +111,12 @@ setprop ro.lmk.psi_partial_stall_ms 70
 setprop ro.lmk.psi_complete_stall_ms 300
 setprop lmkd.reinit 1
 
-# --- BFQ: low-latency mode ---
+# --- BFQ / Storage: low-latency mode ---
 for dev in /sys/block/sd*/queue/iosched/low_latency; do
     [ -e "$dev" ] && echo 1 > "$dev" 2>/dev/null
+done
+for q in /sys/block/sd*/queue/iosched/slice_idle; do
+    [ -e "$q" ] && echo 0 > "$q" 2>/dev/null
 done
 EOF
 
@@ -118,7 +126,7 @@ EOF
 cat << 'EOF' > /data/adb/service.d/purrx-gamewatch.sh
 #!/system/bin/sh
 # PurrX Game Watch — detects heavy games in foreground, switches profiles.
-# Cost: ~0.1% CPU. One dumpsys call every 5 seconds.
+# Cost: ~0.1% CPU. Checks foreground activity every 3 seconds.
 
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 5; done
 sleep 20
@@ -133,16 +141,28 @@ STOCK_GPU_MIN=$(cat /sys/class/kgsl/kgsl-3d0/devfreq/min_freq 2>/dev/null)
 apply_gaming() {
     echo "PurrX: entering GAMING mode" > /dev/kmsg 2>/dev/null
 
+    # 1. GPU: Set min frequency to 355MHz+ during match (instant 60 FPS frame time)
     MAX=$(cat /sys/class/kgsl/kgsl-3d0/devfreq/max_freq 2>/dev/null)
     if [ -n "$MAX" ] && [ "$MAX" -gt 0 ]; then
         echo $((MAX / 2)) > /sys/class/kgsl/kgsl-3d0/devfreq/min_freq 2>/dev/null
     fi
 
+    # 2. CPUSET: SILENCE BACKGROUND ACTIVITIES TO LITTLE CORES
+    # Background cannot touch Big Kryo Gold cores (CPU 6-7)
+    echo 0-1 > /dev/cpuset/background/cpus 2>/dev/null
+    echo 0-2 > /dev/cpuset/system-background/cpus 2>/dev/null
+    echo 0-5 > /dev/cpuset/foreground/cpus 2>/dev/null
+    # Game (top-app) has full unconstrained access to all cores
+    echo 0-7 > /dev/cpuset/top-app/cpus 2>/dev/null
+
+    # 3. SCHEDTUNE: GAME FIRST
     if [ -d /dev/stune/top-app ]; then
         echo 20 > /dev/stune/top-app/schedtune.boost 2>/dev/null
         echo 1 > /dev/stune/top-app/schedtune.prefer_idle 2>/dev/null
+        echo 1 > /dev/stune/top-app/schedtune.colocate 2>/dev/null
     fi
 
+    # 4. CPU GOVERNOR: INSTANT 90% RAMP-UP
     for policy in /sys/devices/system/cpu/cpufreq/policy*; do
         if [ -d "$policy/schedutil" ]; then
             echo 500 > "$policy/schedutil/up_rate_limit_us" 2>/dev/null
@@ -151,6 +171,7 @@ apply_gaming() {
         fi
     done
 
+    # Disable power-nap during active rendering
     [ -e /sys/class/kgsl/kgsl-3d0/force_no_nap ] && \
         echo 1 > /sys/class/kgsl/kgsl-3d0/force_no_nap 2>/dev/null
 
@@ -161,14 +182,22 @@ apply_gaming() {
 apply_daily() {
     echo "PurrX: entering DAILY mode" > /dev/kmsg 2>/dev/null
 
+    # Restore GPU idle floor
     [ "$STOCK_GPU_MIN" -eq 0 ] && \
         echo "$STOCK_GPU_MIN" > /sys/class/kgsl/kgsl-3d0/devfreq/min_freq 2>/dev/null
 
+    # Restore default cpusets
+    echo 0-7 > /dev/cpuset/background/cpus 2>/dev/null
+    echo 0-7 > /dev/cpuset/system-background/cpus 2>/dev/null
+    echo 0-7 > /dev/cpuset/foreground/cpus 2>/dev/null
+
+    # Restore SchedTune
     if [ -d /dev/stune/top-app ]; then
         echo 0 > /dev/stune/top-app/schedtune.boost 2>/dev/null
         echo 0 > /dev/stune/top-app/schedtune.prefer_idle 2>/dev/null
     fi
 
+    # Restore governor down-scaling delay
     for policy in /sys/devices/system/cpu/cpufreq/policy*; do
         if [ -d "$policy/schedutil" ]; then
             echo 20000 > "$policy/schedutil/down_rate_limit_us" 2>/dev/null
@@ -180,7 +209,9 @@ apply_daily() {
 }
 
 while true; do
-    FG=$(dumpsys activity activities 2>/dev/null | grep -E 'ResumedActivity|mResumedActivity' | head -1)
+    # Compatible with Android 11 through Android 17 dumpsys output
+    FG=$(dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | head -1)
+    [ -z "$FG" ] && FG=$(dumpsys activity activities 2>/dev/null | grep -E 'ResumedActivity|mResumedActivity' | head -1)
 
     if echo "$FG" | grep -qE "$HEAVY_GAMES"; then
         [ "$CURRENT_MODE" != "gaming" ] && { apply_gaming; CURRENT_MODE="gaming"; }
@@ -188,7 +219,7 @@ while true; do
         [ "$CURRENT_MODE" != "daily" ] && { apply_daily; CURRENT_MODE="daily"; }
     fi
 
-    sleep 5
+    sleep 3
 done
 EOF
 
