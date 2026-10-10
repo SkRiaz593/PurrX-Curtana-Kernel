@@ -36,11 +36,11 @@ static struct work_struct input_boost_work;
 
 static bool input_boost_enabled;
 
-/* Calibrated to 65ms: ensures smooth frame pacing across 60 FPS display frames */
-static unsigned int input_boost_ms = 65;
+/* 80ms duration: covers continuous camera swiping & tracking without micro-stutter */
+static unsigned int input_boost_ms = 80;
 module_param(input_boost_ms, uint, 0644);
 
-/* Default enabled (1): WALT scheduler instantly migrates touch threads to Big cluster */
+/* Default enabled (1): WALT scheduler instantly migrates touch thread to Big cores */
 static unsigned int sched_boost_on_input = 1;
 module_param(sched_boost_on_input, uint, 0644);
 
@@ -49,8 +49,8 @@ static bool sched_boost_active;
 static struct delayed_work input_boost_rem;
 static u64 last_input_time;
 
-/* Lowered to 40ms: eliminates tap-fire choking during rapid shooting in Free Fire */
-#define MIN_INPUT_INTERVAL (40 * USEC_PER_MSEC)
+/* ZERO touch dead-time: eliminates all input lag and tap-fire gating */
+#define MIN_INPUT_INTERVAL 0
 
 static int set_input_boost_freq(const char *buf, const struct kernel_param *kp)
 {
@@ -234,7 +234,7 @@ static void cpuboost_input_event(struct input_handle *handle,
 		return;
 
 	now = ktime_to_us(ktime_get());
-	if (now - last_input_time < MIN_INPUT_INTERVAL)
+	if (MIN_INPUT_INTERVAL && (now - last_input_time < MIN_INPUT_INTERVAL))
 		return;
 
 	if (work_pending(&input_boost_work))
@@ -328,9 +328,9 @@ static int cpu_boost_init(void)
 	INIT_DELAYED_WORK(&input_boost_rem, do_input_boost_rem);
 
 	/*
-	 * Esports Scrim Tuning: 90-95% Sustained Peak Power
-	 * Big Kryo Gold (CPU 6-7): 2.01 GHz (2016000 kHz) for zero input lag
-	 * Little Kryo Silver (CPU 0-5): 1.61 GHz (1612800 kHz) for thermal efficiency
+	 * Esports Scrim Tuning: 90% Sustainable Power Envelope
+	 * Big Kryo Gold (CPU 6-7): 2.01 GHz (2016000 kHz) for zero input lag without overheating
+	 * Little Kryo Silver (CPU 0-5): 1.61 GHz (1612800 kHz) for cool baseline thermals
 	 */
 	{
 		int cpu;
