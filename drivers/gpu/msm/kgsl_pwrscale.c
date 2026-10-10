@@ -320,73 +320,11 @@ static int _thermal_adjust(struct kgsl_pwrctrl *pwr, int level)
 }
 
 /*
- * Use various metrics including level stability, NAP intervals, and
- * overall GPU freq / DDR freq combination to decide if POPP should
- * be activated.
+ * Esports optimization: Disable POPP artificial downclocking.
+ * Prevents micro-stutters during 60 FPS gameplay when scene load remains constant.
  */
 static bool popp_stable(struct kgsl_device *device)
 {
-	s64 t;
-	s64 nap_time = 0;
-	s64 go_time = 0;
-	int i, index;
-	int nap = 0;
-	s64 percent_nap = 0;
-	struct kgsl_pwr_event *e;
-	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
-	struct kgsl_pwrscale *psc = &device->pwrscale;
-
-	if (!test_bit(POPP_ON, &psc->popp_state))
-		return false;
-
-	/* If already pushed or running naturally at min don't push further */
-	if (test_bit(POPP_PUSH, &psc->popp_state))
-		return false;
-	if (!psc->popp_level &&
-			(pwr->active_pwrlevel == pwr->min_pwrlevel))
-		return false;
-	if (psc->history[KGSL_PWREVENT_STATE].events == NULL)
-		return false;
-
-	t = ktime_to_ms(ktime_get());
-	/* Check for recent NAP statistics: NAPping regularly and well? */
-	if (pwr->active_pwrlevel == 0) {
-		index = psc->history[KGSL_PWREVENT_STATE].index;
-		i = index > 0 ? (index - 1) :
-			(psc->history[KGSL_PWREVENT_STATE].size - 1);
-		while (i != index) {
-			e = &psc->history[KGSL_PWREVENT_STATE].events[i];
-			if (e->data == KGSL_STATE_NAP ||
-				e->data == KGSL_STATE_SLUMBER) {
-				if (ktime_to_ms(e->start) + STABLE_TIME > t) {
-					nap++;
-					nap_time += e->duration;
-				}
-			} else if (e->data == KGSL_STATE_ACTIVE) {
-				if (ktime_to_ms(e->start) + STABLE_TIME > t)
-					go_time += e->duration;
-			}
-			if (i == 0)
-				i = psc->history[KGSL_PWREVENT_STATE].size - 1;
-			else
-				i--;
-		}
-		if (nap_time && go_time) {
-			percent_nap = 100 * nap_time;
-			div64_s64(percent_nap, nap_time + go_time);
-		}
-		trace_kgsl_popp_nap(device, (int)nap_time / 1000, nap,
-				percent_nap);
-		/* If running high at turbo, don't push */
-		if (nap < MIN_SLEEP_PERIODS || percent_nap < MIN_SLEEP_PERCENT)
-			return false;
-	}
-
-	/* Finally check that there hasn't been a recent change */
-	if ((device->pwrscale.freq_change_time + STABLE_TIME) < t) {
-		device->pwrscale.freq_change_time = t;
-		return true;
-	}
 	return false;
 }
 
@@ -429,81 +367,15 @@ bool kgsl_popp_check(struct kgsl_device *device)
  */
 static void popp_trans1(struct kgsl_device *device)
 {
-	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
-	struct kgsl_pwrlevel *pl = &pwr->pwrlevels[pwr->active_pwrlevel];
-	struct kgsl_pwrscale *psc = &device->pwrscale;
-	int old_level = psc->popp_level;
-
-	switch (old_level) {
-	case 0:
-		psc->popp_level = 2;
-		/* If the current level has a high default bus don't push it */
-		if (pl->bus_freq == pl->bus_max)
-			pwr->bus_mod = 1;
-		kgsl_pwrctrl_pwrlevel_change(device, pwr->active_pwrlevel + 1);
-		break;
-	case 1:
-	case 2:
-		psc->popp_level++;
-		break;
-	case 3:
-		set_bit(POPP_PUSH, &psc->popp_state);
-		psc->popp_level = 0;
-		break;
-	case POPP_MAX:
-	default:
-		psc->popp_level = 0;
-		break;
-	}
-
-	trace_kgsl_popp_level(device, old_level, psc->popp_level);
+	/* Neutralized for esports stability */
 }
 
 /*
- * The GPU DCVS algorithm recommends a level change.  Apply any
- * POPP restrictions and update the level accordingly
+ * The GPU DCVS algorithm recommends a level change.
+ * Pass through directly without POPP artificial downscaling delays.
  */
 static int popp_trans2(struct kgsl_device *device, int level)
 {
-	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
-	struct kgsl_pwrscale *psc = &device->pwrscale;
-	int old_level = psc->popp_level;
-
-	if (!test_bit(POPP_ON, &psc->popp_state))
-		return level;
-
-	clear_bit(POPP_PUSH, &psc->popp_state);
-	/* If the governor recommends going down, do it! */
-	if (pwr->active_pwrlevel < level) {
-		psc->popp_level = 0;
-		trace_kgsl_popp_level(device, old_level, psc->popp_level);
-		return level;
-	}
-
-	switch (psc->popp_level) {
-	case 0:
-		/* If the feature isn't engaged, go up immediately */
-		break;
-	case 1:
-		/* Turn off mitigation, and go up a level */
-		psc->popp_level = 0;
-		break;
-	case 2:
-	case 3:
-		/* Try a more aggressive mitigation */
-		psc->popp_level--;
-		level++;
-		/* Update the stable timestamp */
-		device->pwrscale.freq_change_time = ktime_to_ms(ktime_get());
-		break;
-	case POPP_MAX:
-	default:
-		psc->popp_level = 0;
-		break;
-	}
-
-	trace_kgsl_popp_level(device, old_level, psc->popp_level);
-
 	return level;
 }
 
@@ -876,7 +748,6 @@ static int opp_notify(struct notifier_block *nb,
 	return 0;
 }
 
-
 /*
  * kgsl_pwrscale_init - Initialize pwrscale.
  * @dev: The device
@@ -911,7 +782,7 @@ int kgsl_pwrscale_init(struct device *dev, const char *governor)
 
 	profile->initial_freq =
 		pwr->pwrlevels[pwr->default_pwrlevel].gpu_freq;
-	/* Let's start with 10 ms and tune in later */
+	/* 10 ms polling rate for low latency */
 	profile->polling_ms = 10;
 
 	/* do not include the 'off' level or duplicate freq. levels */
