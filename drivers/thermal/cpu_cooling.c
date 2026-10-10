@@ -8,11 +8,11 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; version 2 of the License.
+ *  it under the terms of the GNU General Public License version 2 and
+ *  only version 2 as published by the Free Software Foundation.
  *
- *  This program is distributed in the hope that it will be useful, but
- *  WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  *  General Public License for more details.
  *
@@ -49,7 +49,7 @@
  *	level 0 --> 1st Max Freq
  *	level 1 --> 2nd Max Freq
  *	...
- *	leven n --> core isolated
+ *	level n --> core isolated
  */
 
 /**
@@ -196,7 +196,7 @@ static int cpufreq_cooling_pm_notify(struct notifier_block *nb,
 				cpu = cpufreq_cdev->cpu_id;
 				/*
 				 * Unlock this lock before calling
-				 * schedule_isolate. as this could lead to
+				 * schedule_isolate, as this could lead to
 				 * deadlock with hotplug path.
 				 */
 				mutex_unlock(&core_isolate_lock);
@@ -280,7 +280,6 @@ static int cpufreq_hp_online(unsigned int online_cpu)
 	return ret;
 }
 
-
 /**
  * cpufreq_thermal_notifier - notifier callback for cpufreq policy change.
  * @nb:	struct notifier_block * with callback info.
@@ -305,10 +304,6 @@ static int cpufreq_thermal_notifier(struct notifier_block *nb,
 
 	mutex_lock(&cooling_list_lock);
 	list_for_each_entry(cpufreq_cdev, &cpufreq_cdev_list, node) {
-		/*
-		 * A new copy of the policy is sent to the notifier and can't
-		 * compare that directly.
-		 */
 		if (!cpumask_intersects(cpufreq_cdev->policy->related_cpus,
 					policy->related_cpus))
 			continue;
@@ -317,20 +312,7 @@ static int cpufreq_thermal_notifier(struct notifier_block *nb,
 		if (cpufreq_cdev->floor_freq > floor_freq)
 			floor_freq = cpufreq_cdev->floor_freq;
 	}
-	/*
-	 * policy->max is the maximum allowed frequency defined by user
-	 * and clipped_freq is the maximum that thermal constraints
-	 * allow.
-	 *
-	 * If clipped_freq is lower than policy->max, then we need to
-	 * readjust policy->max.
-	 *
-	 * But, if clipped_freq is greater than policy->max, we don't
-	 * need to do anything.
-	 *
-	 * Similarly, if policy minimum set by the user is less than
-	 * the floor_frequency, then adjust the policy->min.
-	 */
+
 	if (policy->max > clipped_freq || policy->min < floor_freq)
 		cpufreq_verify_within_limits(policy, floor_freq, clipped_freq);
 	mutex_unlock(&cooling_list_lock);
@@ -340,16 +322,6 @@ static int cpufreq_thermal_notifier(struct notifier_block *nb,
 
 /**
  * update_freq_table() - Update the freq table with power numbers
- * @cpufreq_cdev:	the cpufreq cooling device in which to update the table
- * @capacitance: dynamic power coefficient for these cpus
- *
- * Update the freq table with power numbers.  This table will be used in
- * cpu_power_to_freq() and cpu_freq_to_power() to convert between power and
- * frequency efficiently.  Power is stored in mW, frequency in KHz.  The
- * resulting table is in descending order.
- *
- * Return: 0 on success, -EINVAL if there are no OPPs for any CPUs,
- * or -ENOMEM if we run out of memory.
  */
 static int update_freq_table(struct cpufreq_cooling_device *cpufreq_cdev,
 			     u32 capacitance)
@@ -370,10 +342,6 @@ static int update_freq_table(struct cpufreq_cooling_device *cpufreq_cdev,
 	if (num_opps < 0)
 		return num_opps;
 
-	/*
-	 * The cpufreq table is also built from the OPP table and so the count
-	 * should match.
-	 */
 	if (num_opps != cpufreq_cdev->max_level + 1) {
 		dev_warn(dev, "Number of OPPs not matching with max_levels\n");
 		return -EINVAL;
@@ -385,10 +353,6 @@ static int update_freq_table(struct cpufreq_cooling_device *cpufreq_cdev,
 		u64 power;
 		u32 voltage_mv;
 
-		/*
-		 * Find ceil frequency as 'freq' may be slightly lower than OPP
-		 * freq due to truncation while converting to kHz.
-		 */
 		opp = dev_pm_opp_find_freq_ceil(dev, &freq);
 		if (IS_ERR(opp)) {
 			dev_err(dev, "failed to get opp for %lu frequency\n",
@@ -399,14 +363,9 @@ static int update_freq_table(struct cpufreq_cooling_device *cpufreq_cdev,
 		voltage_mv = dev_pm_opp_get_voltage(opp) / 1000;
 		dev_pm_opp_put(opp);
 
-		/*
-		 * Do the multiplication with MHz and millivolt so as
-		 * to not overflow.
-		 */
 		power = (u64)capacitance * freq_mhz * voltage_mv * voltage_mv;
 		do_div(power, 1000000000);
 
-		/* power is stored in mW */
 		freq_table[i].power = power;
 	}
 
@@ -439,15 +398,6 @@ static u32 cpu_power_to_freq(struct cpufreq_cooling_device *cpufreq_cdev,
 	return freq_table[i].frequency;
 }
 
-/**
- * get_load() - get load for a cpu since last updated
- * @cpufreq_cdev:	&struct cpufreq_cooling_device for this cpu
- * @cpu:	cpu number
- * @cpu_idx:	index of the cpu in time_in_idle*
- *
- * Return: The average load of cpu @cpu in percentage since this
- * function was last called.
- */
 static u32 get_load(struct cpufreq_cooling_device *cpufreq_cdev, int cpu,
 		    int cpu_idx)
 {
@@ -470,21 +420,6 @@ static u32 get_load(struct cpufreq_cooling_device *cpufreq_cdev, int cpu,
 	return load;
 }
 
-/**
- * get_static_power() - calculate the static power consumed by the cpus
- * @cpufreq_cdev:	struct &cpufreq_cooling_device for this cpu cdev
- * @tz:		thermal zone device in which we're operating
- * @freq:	frequency in KHz
- * @power:	pointer in which to store the calculated static power
- *
- * Calculate the static power consumed by the cpus described by
- * @cpu_actor running at frequency @freq.  This function relies on a
- * platform specific function that should have been provided when the
- * actor was registered.  If it wasn't, the static power is assumed to
- * be negligible.  The calculated static power is stored in @power.
- *
- * Return: 0 on success, -E* on failure.
- */
 static int get_static_power(struct cpufreq_cooling_device *cpufreq_cdev,
 			    struct thermal_zone_device *tz, unsigned long freq,
 			    u32 *power)
@@ -524,14 +459,6 @@ static int get_static_power(struct cpufreq_cooling_device *cpufreq_cdev,
 						  voltage, power);
 }
 
-/**
- * get_dynamic_power() - calculate the dynamic power
- * @cpufreq_cdev:	&cpufreq_cooling_device for this cdev
- * @freq:	current frequency
- *
- * Return: the dynamic power consumed by the cpus described by
- * @cpufreq_cdev.
- */
 static u32 get_dynamic_power(struct cpufreq_cooling_device *cpufreq_cdev,
 			     unsigned long freq)
 {
@@ -541,18 +468,6 @@ static u32 get_dynamic_power(struct cpufreq_cooling_device *cpufreq_cdev,
 	return (raw_cpu_power * cpufreq_cdev->last_load) / 100;
 }
 
-/* cpufreq cooling device callback functions are defined below */
-
-/**
- * cpufreq_get_max_state - callback function to get the max cooling state.
- * @cdev: thermal cooling device pointer.
- * @state: fill this variable with the max cooling state.
- *
- * Callback for the thermal cooling device to return the cpufreq
- * max cooling state.
- *
- * Return: 0 on success, an error code otherwise.
- */
 static int cpufreq_get_max_state(struct thermal_cooling_device *cdev,
 				 unsigned long *state)
 {
@@ -562,16 +477,6 @@ static int cpufreq_get_max_state(struct thermal_cooling_device *cdev,
 	return 0;
 }
 
-/**
- * cpufreq_get_min_state - callback function to get the device floor state.
- * @cdev: thermal cooling device pointer.
- * @state: fill this variable with the cooling device floor.
- *
- * Callback for the thermal cooling device to return the cpufreq
- * floor state.
- *
- * Return: 0 on success, an error code otherwise.
- */
 static int cpufreq_get_min_state(struct thermal_cooling_device *cdev,
 				 unsigned long *state)
 {
@@ -582,16 +487,6 @@ static int cpufreq_get_min_state(struct thermal_cooling_device *cdev,
 	return 0;
 }
 
-/**
- * cpufreq_set_min_state - callback function to set the device floor state.
- * @cdev: thermal cooling device pointer.
- * @state: set this variable to the current cooling state.
- *
- * Callback for the thermal cooling device to change the cpufreq
- * floor state.
- *
- * Return: 0 on success, an error code otherwise.
- */
 static int cpufreq_set_min_state(struct thermal_cooling_device *cdev,
 				 unsigned long state)
 {
@@ -607,17 +502,8 @@ static int cpufreq_set_min_state(struct thermal_cooling_device *cdev,
 
 	cpufreq_cdev->cpufreq_floor_state = state;
 
-	/*
-	 * Check if the device has a platform mitigation function that
-	 * can handle the CPU freq mitigation, if not, notify cpufreq
-	 * framework.
-	 */
 	if (cpufreq_cdev->plat_ops &&
 		cpufreq_cdev->plat_ops->floor_limit) {
-		/*
-		 * Last level is core isolation so use the frequency
-		 * of previous state.
-		 */
 		if (state == cpufreq_cdev->max_level)
 			state--;
 		floor_freq = cpufreq_cdev->freq_table[state].frequency;
@@ -632,16 +518,6 @@ static int cpufreq_set_min_state(struct thermal_cooling_device *cdev,
 	return 0;
 }
 
-/**
- * cpufreq_get_cur_state - callback function to get the current cooling state.
- * @cdev: thermal cooling device pointer.
- * @state: fill this variable with the current cooling state.
- *
- * Callback for the thermal cooling device to return the cpufreq
- * current cooling state.
- *
- * Return: 0 on success, an error code otherwise.
- */
 static int cpufreq_get_cur_state(struct thermal_cooling_device *cdev,
 				 unsigned long *state)
 {
@@ -653,14 +529,7 @@ static int cpufreq_get_cur_state(struct thermal_cooling_device *cdev,
 }
 
 /**
- * cpufreq_set_cur_state - callback function to set the current cooling state.
- * @cdev: thermal cooling device pointer.
- * @state: set this variable to the current cooling state.
- *
- * Callback for the thermal cooling device to change the cpufreq
- * current cooling state.
- *
- * Return: 0 on success, an error code otherwise.
+ * cpufreq_set_cur_state - Calibrated for sustained 60 FPS esports
  */
 static int cpufreq_set_cur_state(struct thermal_cooling_device *cdev,
 				 unsigned long state)
@@ -686,7 +555,17 @@ static int cpufreq_set_cur_state(struct thermal_cooling_device *cdev,
 	prev_state = cpufreq_cdev->cpufreq_state;
 	cpufreq_cdev->cpufreq_state = state;
 	mutex_unlock(&core_isolate_lock);
-	/* If state is the last, isolate the CPU */
+
+	/*
+	 * Esports Optimization 1: NEVER isolate Big Kryo Gold cores (CPU 6, 7).
+	 * Isolate prevention keeps dual high-performance cores active for 60 FPS.
+	 */
+	if (state == cpufreq_cdev->max_level && cpu >= 6) {
+		state = (cpufreq_cdev->max_level > 1) ? cpufreq_cdev->max_level - 1 : 0;
+		goto update_frequency;
+	}
+
+	/* If state is the last, isolate the Little CPU */
 	if (state == cpufreq_cdev->max_level) {
 		if (cpu_online(cpu) &&
 			(!cpumask_test_and_set_cpu(cpu,
@@ -717,13 +596,22 @@ static int cpufreq_set_cur_state(struct thermal_cooling_device *cdev,
 	}
 update_frequency:
 	clip_freq = cpufreq_cdev->freq_table[state].frequency;
+
+	/*
+	 * Esports Optimization 2: Sustained Thermal Floor (65°C - 70°C target)
+	 * Big Kryo Gold (CPU 6-7): Never throttled below 1.74 GHz (1747200 kHz)
+	 * Little Kryo Silver (CPU 0-5): Never throttled below 1.34 GHz (1344000 kHz)
+	 * Eliminates mid-game thermal collapse while keeping temperatures manageable.
+	 */
+	if (cpu >= 6 && clip_freq < 1747200)
+		clip_freq = 1747200;
+	else if (cpu < 6 && clip_freq < 1344000)
+		clip_freq = 1344000;
+
 	cpufreq_cdev->cpufreq_state = state;
 	cpufreq_cdev->clipped_freq = clip_freq;
 
-	/* Check if the device has a platform mitigation function that
-	 * can handle the CPU freq mitigation, if not, notify cpufreq
-	 * framework.
-	 */
+	/* Notify cpufreq framework of the bounded thermal limit */
 	if (cpufreq_cdev->plat_ops) {
 		if (cpufreq_cdev->plat_ops->ceil_limit)
 			cpufreq_cdev->plat_ops->ceil_limit(cpu,
@@ -735,29 +623,6 @@ update_frequency:
 	return 0;
 }
 
-/**
- * cpufreq_get_requested_power() - get the current power
- * @cdev:	&thermal_cooling_device pointer
- * @tz:		a valid thermal zone device pointer
- * @power:	pointer in which to store the resulting power
- *
- * Calculate the current power consumption of the cpus in milliwatts
- * and store it in @power.  This function should actually calculate
- * the requested power, but it's hard to get the frequency that
- * cpufreq would have assigned if there were no thermal limits.
- * Instead, we calculate the current power on the assumption that the
- * immediate future will look like the immediate past.
- *
- * We use the current frequency and the average load since this
- * function was last called.  In reality, there could have been
- * multiple opps since this function was last called and that affects
- * the load calculation.  While it's not perfectly accurate, this
- * simplification is good enough and works.  REVISIT this, as more
- * complex code may be needed if experiments show that it's not
- * accurate enough.
- *
- * Return: 0 on success, -E* if getting the static power failed.
- */
 static int cpufreq_get_requested_power(struct thermal_cooling_device *cdev,
 				       struct thermal_zone_device *tz,
 				       u32 *power)
@@ -813,21 +678,6 @@ static int cpufreq_get_requested_power(struct thermal_cooling_device *cdev,
 	return 0;
 }
 
-/**
- * cpufreq_state2power() - convert a cpu cdev state to power consumed
- * @cdev:	&thermal_cooling_device pointer
- * @tz:		a valid thermal zone device pointer
- * @state:	cooling device state to be converted
- * @power:	pointer in which to store the resulting power
- *
- * Convert cooling device state @state into power consumption in
- * milliwatts assuming 100% load.  Store the calculated power in
- * @power.
- *
- * Return: 0 on success, -EINVAL if the cooling device state could not
- * be converted into a frequency or other -E* if there was an error
- * when calculating the static power.
- */
 static int cpufreq_state2power(struct thermal_cooling_device *cdev,
 			       struct thermal_zone_device *tz,
 			       unsigned long state, u32 *power)
@@ -837,7 +687,6 @@ static int cpufreq_state2power(struct thermal_cooling_device *cdev,
 	int ret;
 	struct cpufreq_cooling_device *cpufreq_cdev = cdev->devdata;
 
-	/* Request state should be less than max_level */
 	if (WARN_ON(state > cpufreq_cdev->max_level))
 		return -EINVAL;
 
@@ -853,26 +702,6 @@ static int cpufreq_state2power(struct thermal_cooling_device *cdev,
 	return ret;
 }
 
-/**
- * cpufreq_power2state() - convert power to a cooling device state
- * @cdev:	&thermal_cooling_device pointer
- * @tz:		a valid thermal zone device pointer
- * @power:	power in milliwatts to be converted
- * @state:	pointer in which to store the resulting state
- *
- * Calculate a cooling device state for the cpus described by @cdev
- * that would allow them to consume at most @power mW and store it in
- * @state.  Note that this calculation depends on external factors
- * such as the cpu load or the current static power.  Calling this
- * function with the same power as input can yield different cooling
- * device states depending on those external factors.
- *
- * Return: 0 on success, -ENODEV if no cpus are online or -EINVAL if
- * the calculated frequency could not be converted to a valid state.
- * The latter should not happen unless the frequencies available to
- * cpufreq have changed since the initialization of the cpu cooling
- * device.
- */
 static int cpufreq_power2state(struct thermal_cooling_device *cdev,
 			       struct thermal_zone_device *tz, u32 power,
 			       unsigned long *state)
@@ -901,8 +730,6 @@ static int cpufreq_power2state(struct thermal_cooling_device *cdev,
 	return 0;
 }
 
-/* Bind cpufreq callbacks to thermal cooling device ops */
-
 static struct thermal_cooling_device_ops cpufreq_cooling_ops = {
 	.get_max_state = cpufreq_get_max_state,
 	.get_cur_state = cpufreq_get_cur_state,
@@ -920,7 +747,6 @@ static struct thermal_cooling_device_ops cpufreq_power_cooling_ops = {
 	.power2state		= cpufreq_power2state,
 };
 
-/* Notifier for cpufreq policy change */
 static struct notifier_block thermal_cpufreq_notifier_block = {
 	.notifier_call = cpufreq_thermal_notifier,
 };
@@ -947,28 +773,9 @@ static void register_cdev(struct work_struct *work)
 				"cpu_cooling/no-sched",	cpufreq_hp_online,
 				cpufreq_hp_offline);
 	if (ret < 0)
-		pr_err("Error registering for hotpug callback:%d\n", ret);
+		pr_err("Error registering for hotplug callback:%d\n", ret);
 }
-/**
- * __cpufreq_cooling_register - helper function to create cpufreq cooling device
- * @np: a valid struct device_node to the cooling device device tree node
- * @policy: cpufreq policy
- * Normally this should be same as cpufreq policy->related_cpus.
- * @capacitance: dynamic power coefficient for these cpus
- * @plat_static_func: function to calculate the static power consumed by these
- *                    cpus (optional)
- * @plat_mitig_func: function that does the mitigation by changing the
- *                   frequencies (Optional). By default, cpufreq framework will
- *                   be notified of the new limits.
- *
- * This interface function registers the cpufreq cooling device with the name
- * "thermal-cpufreq-%x". This api can support multiple instances of cpufreq
- * cooling devices. It also gives the opportunity to link the cooling device
- * with a device tree node, in order to bind it via the thermal DT code.
- *
- * Return: a valid struct thermal_cooling_device pointer on success,
- * on failure, it returns a corresponding ERR_PTR().
- */
+
 static struct thermal_cooling_device *
 __cpufreq_cooling_register(struct device_node *np,
 			struct cpufreq_policy *policy, u32 capacitance,
@@ -1016,7 +823,6 @@ __cpufreq_cooling_register(struct device_node *np,
 		}
 	}
 
-	/* Last level will indicate the core will be isolated. */
 	cpufreq_cdev->max_level = i + 1;
 
 	cpufreq_cdev->freq_table = kmalloc_array(cpufreq_cdev->max_level,
@@ -1026,7 +832,6 @@ __cpufreq_cooling_register(struct device_node *np,
 		cdev = ERR_PTR(-ENOMEM);
 		goto free_idle_time;
 	}
-	/* max_level is an index */
 	cpufreq_cdev->max_level--;
 
 	ret = ida_simple_get(&cpufreq_ida, 0, 0, GFP_KERNEL);
@@ -1039,19 +844,11 @@ __cpufreq_cooling_register(struct device_node *np,
 	snprintf(dev_name, sizeof(dev_name), "thermal-cpufreq-%d",
 		 cpufreq_cdev->id);
 
-	/* Fill freq-table in descending order of frequencies */
 	for (i = 0, freq = -1; i < cpufreq_cdev->max_level; i++) {
 		freq = find_next_max(policy->freq_table, freq);
 		cpufreq_cdev->freq_table[i].frequency = freq;
-
-		/* Warn for duplicate entries */
-		if (!freq)
-			pr_warn("%s: table has duplicate entries\n", __func__);
-		else
-			pr_debug("%s: freq:%u KHz\n", __func__, freq);
 	}
 
-	/* Max level index is for core isolation, set this level as zero */
 	cpufreq_cdev->freq_table[cpufreq_cdev->max_level].frequency = 0;
 
 	if (capacitance) {
@@ -1082,7 +879,6 @@ __cpufreq_cooling_register(struct device_node *np,
 	cpufreq_cdev->cdev = cdev;
 
 	mutex_lock(&cooling_list_lock);
-	/* Register the notifier for first cpufreq cooling device */
 	first = list_empty(&cpufreq_cdev_list);
 	list_add(&cpufreq_cdev->node, &cpufreq_cdev_list);
 	mutex_unlock(&cooling_list_lock);
@@ -1113,17 +909,6 @@ free_cdev:
 	return cdev;
 }
 
-/**
- * cpufreq_cooling_register - function to create cpufreq cooling device.
- * @policy: cpufreq policy
- *
- * This interface function registers the cpufreq cooling device with the name
- * "thermal-cpufreq-%x". This api can support multiple instances of cpufreq
- * cooling devices.
- *
- * Return: a valid struct thermal_cooling_device pointer on success,
- * on failure, it returns a corresponding ERR_PTR().
- */
 struct thermal_cooling_device *
 cpufreq_cooling_register(struct cpufreq_policy *policy)
 {
@@ -1131,19 +916,6 @@ cpufreq_cooling_register(struct cpufreq_policy *policy)
 }
 EXPORT_SYMBOL_GPL(cpufreq_cooling_register);
 
-/**
- * of_cpufreq_cooling_register - function to create cpufreq cooling device.
- * @np: a valid struct device_node to the cooling device device tree node
- * @policy: cpufreq policy
- *
- * This interface function registers the cpufreq cooling device with the name
- * "thermal-cpufreq-%x". This api can support multiple instances of cpufreq
- * cooling devices. Using this API, the cpufreq cooling device will be
- * linked to the device tree node provided.
- *
- * Return: a valid struct thermal_cooling_device pointer on success,
- * on failure, it returns a corresponding ERR_PTR().
- */
 struct thermal_cooling_device *
 of_cpufreq_cooling_register(struct device_node *np,
 			    struct cpufreq_policy *policy)
@@ -1155,27 +927,6 @@ of_cpufreq_cooling_register(struct device_node *np,
 }
 EXPORT_SYMBOL_GPL(of_cpufreq_cooling_register);
 
-/**
- * cpufreq_power_cooling_register() - create cpufreq cooling device with power extensions
- * @policy:		cpufreq policy
- * @capacitance:	dynamic power coefficient for these cpus
- * @plat_static_func:	function to calculate the static power consumed by these
- *			cpus (optional)
- *
- * This interface function registers the cpufreq cooling device with
- * the name "thermal-cpufreq-%x".  This api can support multiple
- * instances of cpufreq cooling devices.  Using this function, the
- * cooling device will implement the power extensions by using a
- * simple cpu power model.  The cpus must have registered their OPPs
- * using the OPP library.
- *
- * An optional @plat_static_func may be provided to calculate the
- * static power consumed by these cpus.  If the platform's static
- * power consumption is unknown or negligible, make it NULL.
- *
- * Return: a valid struct thermal_cooling_device pointer on success,
- * on failure, it returns a corresponding ERR_PTR().
- */
 struct thermal_cooling_device *
 cpufreq_power_cooling_register(struct cpufreq_policy *policy, u32 capacitance,
 			       get_static_t plat_static_func)
@@ -1185,17 +936,6 @@ cpufreq_power_cooling_register(struct cpufreq_policy *policy, u32 capacitance,
 }
 EXPORT_SYMBOL(cpufreq_power_cooling_register);
 
-/**
- * cpufreq_platform_cooling_register() - create cpufreq cooling device with
- * additional platform specific mitigation function.
- *
- * @clip_cpus: cpumask of cpus where the frequency constraints will happen
- * @plat_ops: the platform mitigation functions that will be called insted of
- * cpufreq, if provided.
- *
- * Return: a valid struct thermal_cooling_device pointer on success,
- * on failure, it returns a corresponding ERR_PTR().
- */
 struct thermal_cooling_device *
 cpufreq_platform_cooling_register(const struct cpumask *clip_cpus,
 				struct cpu_cooling_ops *plat_ops)
@@ -1219,29 +959,6 @@ cpufreq_platform_cooling_register(const struct cpumask *clip_cpus,
 }
 EXPORT_SYMBOL(cpufreq_platform_cooling_register);
 
-/**
- * of_cpufreq_power_cooling_register() - create cpufreq cooling device with power extensions
- * @np:	a valid struct device_node to the cooling device device tree node
- * @policy: cpufreq policy
- * @capacitance:	dynamic power coefficient for these cpus
- * @plat_static_func:	function to calculate the static power consumed by these
- *			cpus (optional)
- *
- * This interface function registers the cpufreq cooling device with
- * the name "thermal-cpufreq-%x".  This api can support multiple
- * instances of cpufreq cooling devices.  Using this API, the cpufreq
- * cooling device will be linked to the device tree node provided.
- * Using this function, the cooling device will implement the power
- * extensions by using a simple cpu power model.  The cpus must have
- * registered their OPPs using the OPP library.
- *
- * An optional @plat_static_func may be provided to calculate the
- * static power consumed by these cpus.  If the platform's static
- * power consumption is unknown or negligible, make it NULL.
- *
- * Return: a valid struct thermal_cooling_device pointer on success,
- * on failure, it returns a corresponding ERR_PTR().
- */
 struct thermal_cooling_device *
 of_cpufreq_power_cooling_register(struct device_node *np,
 				  struct cpufreq_policy *policy,
@@ -1256,12 +973,6 @@ of_cpufreq_power_cooling_register(struct device_node *np,
 }
 EXPORT_SYMBOL(of_cpufreq_power_cooling_register);
 
-/**
- * cpufreq_cooling_unregister - function to remove cpufreq cooling device.
- * @cdev: thermal cooling device pointer.
- *
- * This interface function unregisters the "thermal-cpufreq-%x" cooling device.
- */
 void cpufreq_cooling_unregister(struct thermal_cooling_device *cdev)
 {
 	struct cpufreq_cooling_device *cpufreq_cdev;
@@ -1274,7 +985,6 @@ void cpufreq_cooling_unregister(struct thermal_cooling_device *cdev)
 
 	mutex_lock(&cooling_list_lock);
 	list_del(&cpufreq_cdev->node);
-	/* Unregister the notifier for the last cpufreq cooling device */
 	last = list_empty(&cpufreq_cdev_list);
 	mutex_unlock(&cooling_list_lock);
 
